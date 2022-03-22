@@ -21,16 +21,10 @@ int main() {
   auto extractor =
       lsSmartPointer<rtExtract<NumericType, D>>::New(baseLayer, depoLayer);
   extractor->apply();
-  {
-    auto mesh = extractor->getResultingMesh();
-    lsVTKWriter<NumericType>(mesh, "substrate.vtp").apply();
-  }
 
-  {
-    auto mesh = lsSmartPointer<lsMesh<>>::New();
-    lsToSurfaceMesh<NumericType, D>(depoLayer, mesh).apply();
-    lsVTKWriter<NumericType>(mesh, "depo.vtp").apply();
-  }
+  lsVTKWriter<NumericType>(extractor->getBaseMesh(), "substrate.vtp").apply();
+
+  lsVTKWriter<NumericType>(extractor->getSecondMesh(), "depo.vtp").apply();
 
   return 0;
 }

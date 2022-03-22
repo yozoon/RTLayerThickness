@@ -30,18 +30,24 @@ template <class NumericType, int D> class rtExtract {
   lsSmartPointer<lsMesh<NumericType>> baseMesh = nullptr;
   lsSmartPointer<lsMesh<NumericType>> secondMesh = nullptr;
 
+  bool isAdditive = true;
+
 public:
   rtExtract() : mDevice(rtcNewDevice("hugepages=1")) {}
-  rtExtract(LSPtr passedBaseDomain, LSPtr passedSecondDomain)
+
+  rtExtract(LSPtr passedBaseDomain, LSPtr passedSecondDomain,
+            bool passedIsAdditive = true)
       : mDevice(rtcNewDevice("hugepages=1")), baseDom(passedBaseDomain),
-        secondDom(passedSecondDomain) {}
+        secondDom(passedSecondDomain), isAdditive(passedIsAdditive) {}
 
   ~rtExtract() {
     mGeometry.releaseGeometry();
     rtcReleaseDevice(mDevice);
   }
 
-  lsSmartPointer<lsMesh<>> getResultingMesh() const { return baseMesh; }
+  lsSmartPointer<lsMesh<>> getBaseMesh() const { return baseMesh; }
+
+  lsSmartPointer<lsMesh<>> getSecondMesh() const { return secondMesh; }
 
   void apply() {
     if (baseDom == nullptr || secondDom == nullptr) {
@@ -68,25 +74,20 @@ public:
 
     mGeometry.initGeometry(mDevice, nodes, normals, mDiskRadius);
 
-    // We actually want the base mesh to be a surface mesh...
-    lsExpand<NumericType, D>(baseDom, 3).apply();
-    lsCalculateNormalVectors<NumericType, D>(baseDom).apply();
-    lsToSurfaceMesh<NumericType, D>(baseDom, baseMesh).apply();
+    if (mGeometry.checkGeometryEmpty()) {
+      lsMessage::getInstance().addError(
+          "The geometry that was passed to rtExtract is empty. Aborting.");
+      return;
+    }
 
     // Calculate the size of the bounding box that surrounds both meshes (+ one
     // grid delta padding)
     const auto boundingBox = calcBoundingBox();
 
-    printf("min: (%f, %f, %f)\n", boundingBox[0][0], boundingBox[0][1],
-           boundingBox[0][2]);
-    printf("max: (%f, %f, %f)\n", boundingBox[1][0], boundingBox[1][1],
-           boundingBox[1][2]);
-
     initMemoryFlags();
 
     auto mBoundary = rtBoundary<NumericType, D>(mDevice, boundingBox);
 
-    //================ BEGIN KERNEL ================//
     auto rtcScene = rtcNewScene(mDevice);
 
     // RTC scene flags
@@ -115,15 +116,13 @@ public:
     rtcInitIntersectContext(&rtcContext);
 
     auto &baseNodes = baseMesh->getNodes();
-
-    auto &baseNormals = *baseMesh->getPointData().getVectorData(
-        lsCalculateNormalVectors<NumericType, D>::normalVectorsLabel);
+    auto &baseNormals = *baseMesh->getCellData().getVectorData("Normals");
 
     std::vector<NumericType> normalThickness(
         baseNodes.size(), std::numeric_limits<NumericType>::infinity());
 
     // Trace a ray starting from each point of the baseMesh in the normal
-    // direction
+    // direction.
     for (unsigned i = 0; i < baseNodes.size(); ++i) {
       const auto node = baseNodes[i];
       const auto normal = baseNormals[i];
@@ -135,6 +134,7 @@ public:
 
       reinterpret_cast<__m128 &>(ray.dir_x) = _mm_set_ps(
           0.0f, (float)normal[2], (float)normal[1], (float)normal[0]);
+
 #else
       ray.org_x = (float)node[0];
       ray.org_y = (float)node[1];
@@ -147,6 +147,14 @@ public:
       ray.time = 0.0f;
 #endif
 
+      // If the second domain results from a subtractive process, switch the
+      // normals.
+      if (!isAdditive) {
+        ray.dir_x *= -1;
+        ray.dir_y *= -1;
+        ray.dir_z *= -1;
+      }
+
       ray.tfar = std::numeric_limits<rtcNumericType>::max();
 
       rayHit.hit.instID[0] = RTC_INVALID_GEOMETRY_ID;
@@ -158,7 +166,9 @@ public:
       // if the ray did not hit the geometry, discard it
       if (rayHit.hit.geomID == RTC_INVALID_GEOMETRY_ID ||
           rayHit.hit.geomID == boundaryID) {
+#ifndef NDEBUG
         printf("Invalid hit at (%f, %f, %f)\n", node[0], node[1], node[2]);
+#endif
         continue;
       }
 
@@ -188,9 +198,6 @@ private:
     std::array<NumericType, 3> minimumExtent;
     std::array<NumericType, 3> maximumExtent;
 
-    printf("base: min (%f, %f, %f) max (%f, %f, %f)\n", xminBase, yminBase,
-           zminBase, xmaxBase, ymaxBase, zmaxBase);
-
     minimumExtent[0] = std::min(xminBase, xminSecond) - mGridDelta;
     minimumExtent[1] = std::min(yminBase, yminSecond) - mGridDelta;
     minimumExtent[2] = std::min(zminBase, zminSecond) - mGridDelta;
@@ -200,14 +207,6 @@ private:
     maximumExtent[2] = std::max(zmaxBase, zmaxSecond) + mGridDelta;
 
     return {minimumExtent, maximumExtent};
-  }
-
-  void checkSettings() {
-
-    if (mGeometry.checkGeometryEmpty()) {
-      lsMessage::getInstance().addError(
-          "No geometry was passed to rayTrace. Aborting.");
-    }
   }
 
   void initMemoryFlags() {
