@@ -52,11 +52,8 @@ public:
 
     // Convert levelsets to disk meshes
     baseMesh = lsSmartPointer<lsMesh<NumericType>>::New();
-    lsExpand<NumericType, D>(baseDom, 3).apply();
-    lsCalculateNormalVectors<NumericType, D>(baseDom).apply();
-    lsToSurfaceMesh<NumericType, D>(baseDom, baseMesh).apply();
+    lsToDiskMesh<NumericType, D, NumericType, true>(baseDom, baseMesh).apply();
 
-    // The second mesh is converted to a disk mesh so that it can be used for
     secondMesh = lsSmartPointer<lsMesh<NumericType>>::New();
     lsToDiskMesh<NumericType, D, NumericType, true>(secondDom, secondMesh)
         .apply();
@@ -70,6 +67,11 @@ public:
     mDiskRadius = mGridDelta * rayInternal::DiskFactor;
 
     mGeometry.initGeometry(mDevice, nodes, normals, mDiskRadius);
+
+    // We actually want the base mesh to be a surface mesh...
+    lsExpand<NumericType, D>(baseDom, 3).apply();
+    lsCalculateNormalVectors<NumericType, D>(baseDom).apply();
+    lsToSurfaceMesh<NumericType, D>(baseDom, baseMesh).apply();
 
     // Calculate the size of the bounding box that surrounds both meshes (+ one
     // grid delta padding)
@@ -156,13 +158,13 @@ public:
       // if the ray did not hit the geometry, discard it
       if (rayHit.hit.geomID == RTC_INVALID_GEOMETRY_ID ||
           rayHit.hit.geomID == boundaryID) {
+        printf("Invalid hit at (%f, %f, %f)\n", node[0], node[1], node[2]);
         continue;
       }
 
       normalThickness[i] = ray.tfar;
 
       // maybe also check for hit from back?
-
       assert(rayHit.hit.geomID == geometryID && "Geometry hit ID invalid");
     }
 
@@ -171,8 +173,6 @@ public:
 
     rtcReleaseGeometry(rtcGeometry);
     rtcReleaseGeometry(rtcBoundary);
-
-    //================ END KERNEL ================//
 
     mBoundary.releaseGeometry();
   }
@@ -187,6 +187,9 @@ private:
 
     std::array<NumericType, 3> minimumExtent;
     std::array<NumericType, 3> maximumExtent;
+
+    printf("base: min (%f, %f, %f) max (%f, %f, %f)\n", xminBase, yminBase,
+           zminBase, xmaxBase, ymaxBase, zmaxBase);
 
     minimumExtent[0] = std::min(xminBase, xminSecond) - mGridDelta;
     minimumExtent[1] = std::min(yminBase, yminSecond) - mGridDelta;
