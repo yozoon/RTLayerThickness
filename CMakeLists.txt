@@ -24,6 +24,3 @@ target_link_libraries(${exe} ${VIENNARAY_LIBRARIES} ${VIENNALS_LIBRARIES} ${PROJ
 # Copy files
 file(COPY first.lvst DESTINATION ${PROJECT_BINARY_DIR})
 file(COPY second.lvst DESTINATION ${PROJECT_BINARY_DIR})
-
-file(COPY first_rt.lvst DESTINATION ${PROJECT_BINARY_DIR})
-file(COPY second_rt.lvst DESTINATION ${PROJECT_BINARY_DIR})

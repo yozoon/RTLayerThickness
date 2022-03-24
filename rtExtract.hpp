@@ -18,59 +18,54 @@
 #include "rtBoundary.hpp"
 
 template <class NumericType, int D> class rtExtract {
-  using LSPtr = lsSmartPointer<lsDomain<NumericType, D>>;
+  typedef lsSmartPointer<lsMesh<NumericType>> MeshPtr;
+
   RTCDevice mDevice;
   rayGeometry<NumericType, D> mGeometry;
-  NumericType mDiskRadius = 0;
   NumericType mGridDelta = 0;
+  NumericType mDiskRadius = 0;
 
-  LSPtr baseDom = nullptr;
-  LSPtr secondDom = nullptr;
-
-  lsSmartPointer<lsMesh<NumericType>> baseMesh = nullptr;
-  lsSmartPointer<lsMesh<NumericType>> secondMesh = nullptr;
+  MeshPtr baseMesh = nullptr;
+  MeshPtr secondMesh = nullptr;
 
   bool isAdditive = true;
 
 public:
   rtExtract() : mDevice(rtcNewDevice("hugepages=1")) {}
 
-  rtExtract(LSPtr passedBaseDomain, LSPtr passedSecondDomain,
-            bool passedIsAdditive = true)
-      : mDevice(rtcNewDevice("hugepages=1")), baseDom(passedBaseDomain),
-        secondDom(passedSecondDomain), isAdditive(passedIsAdditive) {}
+  rtExtract(MeshPtr passedBaseMesh, MeshPtr passedSecondMesh,
+            NumericType passedGridDelta, bool passedIsAdditive = true)
+      : mDevice(rtcNewDevice("hugepages=1")), mGridDelta(passedGridDelta),
+        mDiskRadius(mGridDelta * rayInternal::DiskFactor),
+        baseMesh(passedBaseMesh), secondMesh(passedSecondMesh),
+        isAdditive(passedIsAdditive) {}
 
   ~rtExtract() {
     mGeometry.releaseGeometry();
     rtcReleaseDevice(mDevice);
   }
 
-  lsSmartPointer<lsMesh<>> getBaseMesh() const { return baseMesh; }
+  MeshPtr getBaseMesh() const { return baseMesh; }
 
-  lsSmartPointer<lsMesh<>> getSecondMesh() const { return secondMesh; }
+  MeshPtr getSecondMesh() const { return secondMesh; }
 
   void apply() {
-    if (baseDom == nullptr || secondDom == nullptr) {
-      lsMessage::getInstance().addError("At least one of the levelsets passed "
+    if (baseMesh == nullptr || secondMesh == nullptr) {
+      lsMessage::getInstance().addError("At least one of the meshes passed "
                                         "to rtExtract is empty. Aborting.");
       return;
     }
-
-    // Convert levelsets to disk meshes
-    baseMesh = lsSmartPointer<lsMesh<NumericType>>::New();
-    lsToDiskMesh<NumericType, D, NumericType, true>(baseDom, baseMesh).apply();
-
-    secondMesh = lsSmartPointer<lsMesh<NumericType>>::New();
-    lsToDiskMesh<NumericType, D, NumericType, true>(secondDom, secondMesh)
-        .apply();
+    if (baseMesh->getCellData().getVectorData("Normals") == nullptr ||
+        secondMesh->getCellData().getVectorData("Normals") == nullptr) {
+      lsMessage::getInstance().addError(
+          "At least one of the meshes passed "
+          "to rtExtract is not a valid disk mesh. Aborting.");
+      return;
+    }
 
     // Use the second mesh to build the target geometry
     auto nodes = secondMesh->getNodes();
     auto normals = *secondMesh->getCellData().getVectorData("Normals");
-
-    const auto &grid = secondDom->getGrid();
-    mGridDelta = grid.getGridDelta();
-    mDiskRadius = mGridDelta * rayInternal::DiskFactor;
 
     mGeometry.initGeometry(mDevice, nodes, normals, mDiskRadius);
 
@@ -178,8 +173,8 @@ public:
       assert(rayHit.hit.geomID == geometryID && "Geometry hit ID invalid");
     }
 
-    baseMesh->pointData.insertNextScalarData(normalThickness,
-                                             "normalThickness");
+    baseMesh->getCellData().insertNextScalarData(normalThickness,
+                                                 "normalThickness");
 
     rtcReleaseGeometry(rtcGeometry);
     rtcReleaseGeometry(rtcBoundary);
